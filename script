@@ -1,0 +1,311 @@
+import win32print
+import win32api
+import time
+from selenium import webdriver
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from datetime import datetime, date, timedelta
+import os
+from pathlib import Path
+from PyPDF2 import PdfFileReader
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from PyPDF2 import PdfFileReader
+import logging
+from selenium.common.exceptions import NoSuchElementException, WebDriverException
+
+
+def CriarPasta(caminho):
+    os.makedirs(caminho)
+
+today = datetime.now().strftime('%d-%m-%Y')
+url = 'setar_url'
+banco_de_dados = 'setar_nome_arquivo.txt'
+download_dir = "C:\\setar_nome_da_pasta"
+current_dir = os.getcwd()
+logs_dir = "Logs"
+current_dir_logs = os.path.join(current_dir, logs_dir)
+current_dir_bd = os.path.join(current_dir, banco_de_dados)
+
+def Logar(navegador):
+    try:
+        navegador.get(url)
+        navegador.find_element('xpath', 'inserir_xpath').send_keys('setar_login')
+        navegador.find_element('xpath', 'inserir_xpath]').send_keys('setar_senha')
+        navegador.find_element('xpath', 'inserir_xpath').click()
+        logging.info(f'Acesso bem-sucedido à página {url}')
+    except (NoSuchElementException, WebDriverException) as e:
+        logging.error(f'Falha no acesso à página: {e}')
+        return False
+
+def AcessarRelatorios(navegador):
+    try:
+        navegador.find_element('xpath', 'inserir_xpath').click()
+        navegador.find_element('xpath', 'inserir_xpath').click()
+        logging.info(f'Acesso bem-sucedido à página nome_da_pagina ')
+    except (NoSuchElementException, WebDriverException) as e:
+        logging.error(f'Falha no acesso à página: {e}')
+        return False
+
+def RegistrarIdDocumento(id_documento, caminho_arquivo=banco_de_dados):
+    try:
+        with open(caminho_arquivo, 'a') as arquivo:
+            arquivo.write(f'{id_documento}\n')
+        logging.info(f'ID {id_documento} registrado com sucesso.')
+    except Exception as e:
+        logging.error(f'Erro ao registrar ID {id_documento}: {e}')
+    
+def CriarArquivo(banco_de_dados):
+    os.makedirs(os.path.dirname(banco_de_dados), exist_ok=True)
+    with open(banco_de_dados, 'w'):
+        pass 
+
+def VerificarDocumentoExistente(arquivo, document_id):
+    if os.path.exists(arquivo):
+        with open(arquivo, 'r') as arquivo:
+            linhas = arquivo.readlines()
+            if not linhas: 
+                return True
+            for linha in linhas:
+                if int(linha.strip()) == document_id:
+                    return False
+    return True
+
+def DownloadDocumentos(navegador):
+    try:
+        contador_documentos = 0
+        current_date = date.today()
+        print(f"Parte da data extraída: {current_date}")
+
+        for count in range(3, 0, -1):
+            time.sleep(15) 
+            date_text = navegador.find_element('xpath', f'//inserir_xpath[{count}]/td[1]').text
+            date_part = date_text.split(' - ')[0].strip()
+            extracted_date = datetime.strptime(date_part, '%d/%m/%Y').date()
+            link_element = navegador.find_element('xpath', f'//inserir_xpath/td[{count}]/td[5]/a')
+            href = link_element.get_attribute('href')
+            document_id = int(href.split('=')[-1])
+
+            if extracted_date == current_date and VerificarDocumentoExistente(current_dir_bd, document_id) :
+               contador_documentos += 1
+               link_element.click()
+               time.sleep(40) 
+               RegistrarIdDocumento(document_id)
+            
+        if contador_documentos != 0:
+            logging.info(f'Download de documentos finalizado')
+            return True
+        else :
+            logging.info(f'Nenhum Download foi executado')
+            raise RuntimeError('Nenhum Download foi executado')
+        
+    except (NoSuchElementException, WebDriverException, ValueError) as e:
+        logging.error(f'Erro ao fazer o download dos documentos: {e}')
+        return False
+
+def VerificaImpressoraFisica(printer_name):
+    virtual_printers = [
+        "Microsoft Print to PDF",
+        "Microsoft XPS Document Writer",
+        "Fax",
+        "Send To OneNote 16",
+        "OneNote",
+        "PDF",
+        "XPS"
+    ]
+    
+    # Verifica se a impressora está na lista de impressoras virtuais
+    return printer_name not in virtual_printers
+
+def PrinterOffline(printer_name):
+    # Abre a impressora e obtém as informações
+    printer_info = win32print.OpenPrinter(printer_name)
+    printer_status = win32print.GetPrinter(printer_info, 2)
+    
+    # Verifica o status da impressora
+    status = printer_status["Status"]
+    
+    # Flags que indicam se a impressora está offline
+    PRINTER_STATUS_OFFLINE = 0x00000080
+    
+    win32print.ClosePrinter(printer_info)
+    
+    # Retorna True se a impressora estiver offline
+    return bool(status & PRINTER_STATUS_OFFLINE)
+
+
+def ImprimirDocumentos(navegador):
+    try:
+        # Obtém uma lista de todas as impressoras
+        impressora = win32print.GetDefaultPrinter()
+        
+        # Filtra e exibe apenas as impressoras físicas
+        impressoras_fisica = VerificaImpressoraFisica(impressora)
+        primeira_impressora_conectada = None
+
+        if not impressoras_fisica:
+            logging.info(f'Nenhuma impressora física encontrada.')
+            if os.path.exists(current_dir_bd):
+                os.remove(current_dir_bd)
+            raise RuntimeError('Nenhuma impressora física encontrada.')
+        else:
+            primeira_impressora_conectada = impressora
+            logging.info(f"Nome da Impressora: {impressora}")
+
+        if primeira_impressora_conectada and not PrinterOffline(impressora):
+            print("Primeira impressora conectada encontrada:")
+            print(primeira_impressora_conectada)
+            win32print.SetDefaultPrinter(primeira_impressora_conectada)
+            time.sleep(160)
+            lista_arquivos = os.listdir(download_dir)
+            for arquivo in lista_arquivos:
+                print(arquivo)
+                if arquivo.endswith('.pdf'):
+                    logging.info(f'Início enviar impressora arquivo - {arquivo}')
+                    time.sleep(60)
+                    win32api.ShellExecute(0,"print", arquivo, None, download_dir, 0)
+                    logging.info(f'Finalizada enviar impressora')
+
+        else:
+            logging.error(f'Nenhuma impressora conectada encontrada.')
+            if os.path.exists(current_dir_bd):
+                os.remove(current_dir_bd)
+
+    except (NoSuchElementException, WebDriverException, ValueError) as e:
+        logging.error(f'Erro conexão com a impressora {e}')
+        if os.path.exists(current_dir_bd):
+            os.remove(current_dir_bd)
+        return False
+
+def ApagarUltimosLogs():
+    ManterUltimasLinhas(banco_de_dados) #Apagar últimas linhas do banco de dados, deixar apenas as últimas 3 linhas
+    ExcluirLogsAntigos(current_dir_logs)
+    ApagarArquivosPasta(download_dir)
+    print(f"Logs apagados")
+
+
+def ExcluirLogsAntigos(diretorio):
+    try:
+        # Obter a data atual e a data do dia anterior
+        data_atual = datetime.now().date()
+        data_anterior = data_atual - timedelta(days=1)
+        data_atual_formatada = data_atual.strftime("%d-%m-%Y")
+        data_anterior_formatada = data_anterior.strftime("%d-%m-%Y")
+
+        # Listar todos os arquivos no diretório
+        arquivos = os.listdir(diretorio)
+        
+        # Identificar os arquivos que começam com "Log-"
+        arquivos_logs = [arquivo for arquivo in arquivos if arquivo.startswith("Log-")]
+        
+        # Manter apenas os arquivos correspondentes à data atual e ao dia anterior
+        arquivos_manter = [arquivo for arquivo in arquivos_logs if arquivo.endswith(f"{data_atual_formatada}.txt") or arquivo.endswith(f"{data_anterior_formatada}.txt")]
+
+        # Excluir os arquivos restantes
+        for arquivo in arquivos_logs:
+            if arquivo not in arquivos_manter:
+                caminho_arquivo = os.path.join(diretorio, arquivo)
+                os.remove(caminho_arquivo)
+                logging.info(f"Arquivo {arquivo} excluído com sucesso.")
+    except Exception as e:
+        logging.error(f"Ocorreu um erro: {e}")
+
+def ManterUltimasLinhas(banco_de_dados):
+    try:
+        with open(banco_de_dados, 'r') as arquivo:
+            linhas = arquivo.readlines()
+        if len(linhas) > 3:
+            ultimas_linhas = linhas[-3:]
+            with open(banco_de_dados, 'w') as arquivo:
+                arquivo.writelines(ultimas_linhas)
+        else:
+            logging.info(f"O arquivo tem menos de três linhas, não é necessário apagar.")
+    except FileNotFoundError:
+        logging.error(f"Arquivo '{banco_de_dados}' não encontrado.")
+    except Exception as e:
+        logging.error(f"Ocorreu um erro: {e}")
+
+def ApagarArquivosPasta(diretorio):
+    try:
+        # Listar todos os arquivos no diretório
+        arquivos = os.listdir(diretorio)
+        
+        # Iterar sobre todos os arquivos e removê-los
+        for arquivo in arquivos:
+            caminho_arquivo = os.path.join(diretorio, arquivo)
+            if os.path.isfile(caminho_arquivo):
+                os.remove(caminho_arquivo)
+                logging.info(f"Arquivo {arquivo} excluído com sucesso.")
+            else:
+                logging.info(f"{arquivo} não é um arquivo.")
+                
+    except Exception as e:
+        logging.error(f"Ocorreu um erro ao apagar os arquivos: {e}")
+
+def Logout():
+    navegador.find_element('xpath', 'inserir_xpath').click()
+    navegador.find_element('xpath', 'inserir_xpath').click()
+
+if __name__ == "__main__":
+    try:
+        
+        if not os.path.exists(download_dir):
+            CriarPasta(download_dir)
+        else:
+            print(f"A pasta '{download_dir}' já existe.")
+
+        if not os.path.exists(current_dir_bd):
+            CriarArquivo(current_dir_bd)
+        else:
+            print(f"A pasta '{current_dir_bd}' já existe.")
+
+        if not os.path.exists(current_dir_logs):
+            CriarPasta(current_dir_logs)
+        else:
+            print(f"A pasta '{current_dir_logs}' já existe.")
+
+        # Configuração do logger
+        logging.basicConfig(
+            filename=os.path.join(current_dir_logs, f'Log-{today}.txt'),
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            encoding='utf-8'
+        )
+
+        prefs = {
+            "download.default_directory": download_dir,
+            "download.prompt_for_download": False,
+            "directory_upgrade": True
+        }
+
+        chrome_options = Options()
+
+        # Configurando o Chrome para rodar em modo headless
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+
+        chrome_options.add_experimental_option("detach", True)
+        chrome_options.add_experimental_option("prefs", prefs)
+        servico = Service(ChromeDriverManager().install())
+        navegador = webdriver.Chrome(service=servico, options=chrome_options)
+
+        try:
+            Logar(navegador)
+            AcessarRelatorios(navegador)
+            DownloadDocumentos(navegador)
+            ImprimirDocumentos(navegador)
+            Logout()
+            time.sleep(60)
+        except Exception as e:
+            raise e 
+    except Exception as e:
+        logging.info(f"{e}")
+    finally:    
+        ApagarUltimosLogs()
+        navegador.quit()
+        logging.info(f"Script finalizado!")
